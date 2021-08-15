@@ -1,0 +1,3 @@
+# rawcompr
+
+Losslessly compress multimedia files containing raw video tracks
