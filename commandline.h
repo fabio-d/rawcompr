@@ -15,24 +15,42 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef LIBAV_H
-#define LIBAV_H
+#ifndef COMMANDLINE_H
+#define COMMANDLINE_H
 
-#include <stdint.h>
+#include "libav.h"
 
-extern "C"
+#include <map>
+#include <string>
+
+class CommandLine
 {
+	public:
+		enum Operation
+		{
+			Compress,
+			Decompress
+		};
 
-#include <libavformat/avformat.h>
-#include <libavutil/common.h>
-#include <libavutil/pixdesc.h>
-#include <libavutil/timestamp.h>
-#include <libswscale/swscale.h>
+		CommandLine(int argc, char *argv[]);
 
-}
+		Operation operation() const;
 
-void failOnAVERROR(int errnum, const char *fmt, ...)  __attribute__((format(printf, 2, 3)));
+		const char *inputFile() const;
+		const char *outputFile() const;
+		const char *llrFile() const;
 
-AVPixelFormat selectCompatibleLosslessPixelFormat(AVPixelFormat src, const enum AVPixelFormat *candidates /* -1 terminator */);
+		AVCodecID videoCodec() const;
+		void fillVideoCodecOptions(AVDictionary **outDict) const;
+
+	private:
+		void help();
+
+		bool m_decompressFlag;
+		std::string m_inputFile, m_outputFile, m_llrFile;
+
+		AVCodecID m_videoCodec;
+		std::map<std::string, std::string> m_videoCodecOptions;
+};
 
 #endif

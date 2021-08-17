@@ -15,30 +15,37 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef TRANSCODERS_H
-#define TRANSCODERS_H
+#ifndef ENCODERS_H
+#define ENCODERS_H
 
-#include "libav.h"
+#include "llrfile.h"
 
-class Transcoder
+class Encoder
 {
 	public:
-		explicit Transcoder(const AVStream *inputStream, AVFormatContext *outputFormatContext);
-		virtual ~Transcoder();
+		Encoder(const AVStream *inputStream, AVFormatContext *outputFormatContext, PacketReferences *outRefs);
+		virtual ~Encoder();
 
 		virtual void processPacket(const AVPacket *inputPacket) = 0;
 
 	protected:
+		void finalizeAndWritePacket(const AVPacket *inputPacket, AVPacket *outputPacket);
+
 		const AVStream *m_inputStream;
 
 		AVFormatContext *m_outputFormatContext;
 		AVStream *m_outputStream;
+
+	private:
+		PacketReferences *m_outRefs;
+		size_t m_outPacketIndex;
 };
 
-class VideoCompressorTranscoder : public Transcoder
+class VideoEncoder : public Encoder
 {
 	public:
-		VideoCompressorTranscoder(const AVStream *inputStream, AVFormatContext *outputFormatContext, AVCodecID outputCodecID, AVDictionary **outputOptions);
+		VideoEncoder(const AVStream *inputStream, AVFormatContext *outputFormatContext, PacketReferences *outRefs, AVCodecID outputCodecID, AVDictionary **outputOptions);
+		~VideoEncoder() override;
 
 		void processPacket(const AVPacket *inputPacket) override;
 
@@ -50,12 +57,16 @@ class VideoCompressorTranscoder : public Transcoder
 		SwsContext *m_swscaleContext;
 };
 
-class PassthroughTranscoder : public Transcoder
+class CopyEncoder : public Encoder
 {
 	public:
-		PassthroughTranscoder(const AVStream *inputStream, AVFormatContext *outputFormatContext);
+		CopyEncoder(const AVStream *inputStream, AVFormatContext *outputFormatContext, PacketReferences *outRefs);
+		~CopyEncoder() override;
 
 		void processPacket(const AVPacket *inputPacket) override;
+
+	private:
+		AVPacket *m_outputPacket;
 };
 
 #endif

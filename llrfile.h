@@ -15,24 +15,36 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef LIBAV_H
-#define LIBAV_H
+#ifndef LLRFILE_H
+#define LLRFILE_H
 
-#include <stdint.h>
+#include "libav.h"
 
-extern "C"
+#include <map>
+
+class PacketReferences
 {
+	friend void writeLLR(AVIOContext *source, const PacketReferences *packetRefs, AVIOContext *dest);
 
-#include <libavformat/avformat.h>
-#include <libavutil/common.h>
-#include <libavutil/pixdesc.h>
-#include <libavutil/timestamp.h>
-#include <libswscale/swscale.h>
+	public:
+		struct ReferenceInfo
+		{
+			// Length of covered range in original file
+			int origSize;
 
-}
+			// Reference to encoded packet in compressed file
+			int streamIndex;
+			size_t packetIndex;
+			int64_t pts;
+		};
 
-void failOnAVERROR(int errnum, const char *fmt, ...)  __attribute__((format(printf, 2, 3)));
+		void addPacketReference(int streamIndex, size_t packetIndex, int64_t pts, int64_t origPos, int origSize);
 
-AVPixelFormat selectCompatibleLosslessPixelFormat(AVPixelFormat src, const enum AVPixelFormat *candidates /* -1 terminator */);
+		void dump(FILE *dest) const;
+		void save(AVIOContext *dest) const;
+
+	private:
+		std::map<size_t, ReferenceInfo> m_table; // origPos -> other fields
+};
 
 #endif

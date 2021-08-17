@@ -15,31 +15,33 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "transcoders.h"
+#include "commandline.h"
+#include "encoders.h"
 
 #include <err.h>
 #include <map>
 #include <stdio.h>
 #include <stdlib.h>
 
-int main(int argc, char *argv[])
+int compress(const CommandLine &cmd)
 {
 	AVFormatContext *inputFormatContext = nullptr, *outputFormatContext = nullptr;
 	int ret;
 
-	//av_log_set_level(AV_LOG_DEBUG);
-
-	const char *inputFilename = argv[1];
-	const char *outputFilename = "/dev/shm/remuxed_cxx.mkv";
+	const char *inputFilename = cmd.inputFile();
+	const char *outputFilename = cmd.outputFile();
+	const char *llrFilename = cmd.llrFile();
 
 	failOnAVERROR(avformat_open_input(&inputFormatContext, inputFilename, nullptr, nullptr), "avformat_open_input: %s", inputFilename);
 	failOnAVERROR(avformat_find_stream_info(inputFormatContext, nullptr), "avformat_find_stream_info");
 	av_dump_format(inputFormatContext, 0, inputFilename, false);
 
-	fprintf(stderr, "Transcoders:\n");
+	fprintf(stderr, "Encoders:\n");
 	failOnAVERROR(avformat_alloc_output_context2(&outputFormatContext, nullptr, "matroska", outputFilename), "avformat_alloc_output_context2: %s", outputFilename);
 
-	std::map<int, Transcoder*> transcoders;
+	std::map<int, Encoder*> encoders;
+	PacketReferences packetRefs;
+
 	for (unsigned int i = 0; i < inputFormatContext->nb_streams; i++)
 	{
 		const AVStream *inputStream = inputFormatContext->streams[i];
@@ -48,35 +50,33 @@ int main(int argc, char *argv[])
 		const char *codecName = avcodec_get_name(inputCodecParameters->codec_id); // never nullptr (according to documentation)
 		fprintf(stderr, "  Stream #0:%d: input_codec=%s output_codec=", inputStream->index, codecName);
 
-		Transcoder *transcoder = nullptr;
+		Encoder *encoder = nullptr;
 		if (strcmp(codecName, "rawvideo") == 0)
 		{
-			fprintf(stderr, "ffv1\n");
+			fprintf(stderr, "%s\n", avcodec_get_name(cmd.videoCodec()));
 
 			AVDictionary *opts = nullptr;
-			failOnAVERROR(av_dict_set(&opts, "level", "3", 0), "av_dict_set");
-			failOnAVERROR(av_dict_set(&opts, "slicecrc", "0", 0), "av_dict_set");
-			failOnAVERROR(av_dict_set(&opts, "context", "1", 0), "av_dict_set");
-			failOnAVERROR(av_dict_set(&opts, "coder", "range_def", 0), "av_dict_set");
-			failOnAVERROR(av_dict_set(&opts, "g", "600", 0), "av_dict_set");
-			failOnAVERROR(av_dict_set(&opts, "slices", "4", 0), "av_dict_set");
-			transcoder = new VideoCompressorTranscoder(inputStream, outputFormatContext, AV_CODEC_ID_FFV1, &opts);
+			cmd.fillVideoCodecOptions(&opts);
+			encoder = new VideoEncoder(inputStream, outputFormatContext, &packetRefs, cmd.videoCodec(), &opts);
 			av_dict_free(&opts);
 		}
 
-		if (transcoder == nullptr)
+		if (encoder == nullptr)
 		{
 			fprintf(stderr, "copy\n");
-			transcoder = new PassthroughTranscoder(inputStream, outputFormatContext);
+			encoder = new CopyEncoder(inputStream, outputFormatContext, &packetRefs);
 		}
 
-		transcoders.emplace(inputStream->index, transcoder);
+		encoders.emplace(inputStream->index, encoder);
 	}
 
 	av_dump_format(outputFormatContext, 0, outputFilename, true);
 
 	if ((outputFormatContext->oformat->flags & AVFMT_NOFILE) == 0)
 		failOnAVERROR(avio_open(&outputFormatContext->pb, outputFilename, AVIO_FLAG_WRITE), "avio_open: %s", outputFilename);
+
+	AVIOContext *llrFile;
+	failOnAVERROR(avio_open(&llrFile, llrFilename, AVIO_FLAG_WRITE), "avio_open: %s", llrFilename);
 
 	failOnAVERROR(avformat_write_header(outputFormatContext, nullptr), "avformat_write_header");
 
@@ -92,17 +92,41 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Input packet: Stream #0:%d (pos %" PRIi64 " size %u) - pts %" PRIi64 " dts %" PRIi64 " duration %" PRIi64 "\n",
 			packet->stream_index, packet->pos, packet->size, packet->pts, packet->dts, packet->duration);
 
-		Transcoder *transcoder = transcoders.at(packet->stream_index);
-		transcoder->processPacket(packet);
+		Encoder *encoder = encoders.at(packet->stream_index);
+		encoder->processPacket(packet);
 
 		av_packet_unref(packet);
 	}
+
+	av_packet_free(&packet);
+
+	//packetRefs.dump(stderr);
+	writeLLR(inputFormatContext->pb, &packetRefs, llrFile);
 
 	failOnAVERROR(av_write_trailer(outputFormatContext), "av_write_trailer");
 
 	if ((outputFormatContext->oformat->flags & AVFMT_NOFILE) == 0)
 		failOnAVERROR(avio_closep(&outputFormatContext->pb), "avio_closep");
 
+	failOnAVERROR(avio_closep(&llrFile), "avio_closep");
+
+	for (const auto it : encoders)
+		delete it.second;
+
 	avformat_close_input(&inputFormatContext);
 	avformat_free_context(outputFormatContext);
+
+	return EXIT_SUCCESS;
+}
+
+int main(int argc, char *argv[])
+{
+	CommandLine cmd(argc, argv);
+
+	//av_log_set_level(AV_LOG_DEBUG);
+
+	if (cmd.operation() == CommandLine::Compress)
+		return compress(cmd);
+	else
+		return EXIT_FAILURE; // not implemented yet
 }

@@ -15,24 +15,48 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "transcoders.h"
+#include "encoders.h"
 
 #include <err.h>
 
-Transcoder::Transcoder(const AVStream *inputStream, AVFormatContext *outputFormatContext)
-: m_inputStream(inputStream), m_outputFormatContext(outputFormatContext)
+Encoder::Encoder(const AVStream *inputStream, AVFormatContext *outputFormatContext, PacketReferences *outRefs)
+: m_inputStream(inputStream), m_outputFormatContext(outputFormatContext), m_outRefs(outRefs), m_outPacketIndex(0)
 {
 	m_outputStream = avformat_new_stream(outputFormatContext, nullptr);
 	if (m_outputStream == nullptr)
 		errx(EXIT_FAILURE, "avformat_new_stream failed");
 }
 
-Transcoder::~Transcoder()
+Encoder::~Encoder()
 {
 }
 
-VideoCompressorTranscoder::VideoCompressorTranscoder(const AVStream *inputStream, AVFormatContext *outputFormatContext, AVCodecID outputCodecID, AVDictionary **outputOptions)
-: Transcoder(inputStream, outputFormatContext),
+void Encoder::finalizeAndWritePacket(const AVPacket *inputPacket, AVPacket *outputPacket)
+{
+	outputPacket->stream_index = m_outputStream->index;
+
+        outputPacket->pts = av_rescale_q_rnd(inputPacket->pts,
+		m_inputStream->time_base, m_outputStream->time_base,
+		AVRounding(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
+
+        outputPacket->dts = av_rescale_q_rnd(inputPacket->dts,
+		m_inputStream->time_base, m_outputStream->time_base,
+		AVRounding(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
+
+	outputPacket->duration = av_rescale_q(inputPacket->duration,
+		m_inputStream->time_base, m_outputStream->time_base);
+
+	fprintf(stderr, " -> Output packet: Stream #0:%d (index %zu size %u) - pts %" PRIi64 " dts %" PRIi64 " duration %" PRIi64 "\n",
+		outputPacket->stream_index, m_outPacketIndex, outputPacket->size, outputPacket->pts, outputPacket->dts, outputPacket->duration);
+
+	m_outRefs->addPacketReference(m_outputStream->index, m_outPacketIndex, outputPacket->pts, inputPacket->pos, inputPacket->size);
+	failOnAVERROR(av_interleaved_write_frame(m_outputFormatContext, outputPacket), "av_write_frame");
+
+	m_outPacketIndex++;
+}
+
+VideoEncoder::VideoEncoder(const AVStream *inputStream, AVFormatContext *outputFormatContext, PacketReferences *outRefs, AVCodecID outputCodecID, AVDictionary **outputOptions)
+: Encoder(inputStream, outputFormatContext, outRefs),
   m_inputFrame(av_frame_alloc()), m_outputFrame(av_frame_alloc()),
   m_outputPacket(av_packet_alloc())
 {
@@ -94,7 +118,19 @@ VideoCompressorTranscoder::VideoCompressorTranscoder(const AVStream *inputStream
 	failOnAVERROR(av_frame_get_buffer(m_outputFrame, 0), "av_frame_get_buffer");
 }
 
-void VideoCompressorTranscoder::processPacket(const AVPacket *inputPacket)
+VideoEncoder::~VideoEncoder()
+{
+	sws_freeContext(m_swscaleContext);
+
+	av_frame_free(&m_inputFrame);
+	av_frame_free(&m_outputFrame);
+	av_packet_free(&m_outputPacket);
+
+	avcodec_free_context(&m_inputCodecContext);
+	avcodec_free_context(&m_outputCodecContext);
+}
+
+void VideoEncoder::processPacket(const AVPacket *inputPacket)
 {
 	failOnAVERROR(avcodec_send_packet(m_inputCodecContext, inputPacket), "avcodec_send_packet");
 	failOnAVERROR(avcodec_receive_frame(m_inputCodecContext, m_inputFrame), "avcodec_receive_frame");
@@ -121,42 +157,28 @@ void VideoCompressorTranscoder::processPacket(const AVPacket *inputPacket)
 		av_get_pix_fmt_name((AVPixelFormat)m_outputFrame->format), m_outputFrame->pts,
 		(m_outputPacket->flags & AV_PKT_FLAG_KEY) ? " KEYFRAME" : "");
 
-	m_outputPacket->stream_index = m_outputStream->index;
-        m_outputPacket->pts = av_rescale_q_rnd(inputPacket->pts, m_inputStream->time_base, m_outputStream->time_base, AVRounding(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
-        m_outputPacket->dts = av_rescale_q_rnd(inputPacket->dts, m_inputStream->time_base, m_outputStream->time_base, AVRounding(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
-        m_outputPacket->duration = av_rescale_q(inputPacket->duration, m_inputStream->time_base, m_outputStream->time_base);
-
-	fprintf(stderr, " -> Output packet: Stream #0:%d (size %u) - pts %" PRIi64 " dts %" PRIi64 " duration %" PRIi64 "\n",
-		m_outputPacket->stream_index, m_outputPacket->size, m_outputPacket->pts, m_outputPacket->dts, m_outputPacket->duration);
-
-	failOnAVERROR(av_interleaved_write_frame(m_outputFormatContext, m_outputPacket), "av_write_frame");
+	finalizeAndWritePacket(inputPacket, m_outputPacket);
 
 	av_frame_unref(m_inputFrame);
-	av_packet_unref(m_outputPacket);
 }
 
-PassthroughTranscoder::PassthroughTranscoder(const AVStream *inputStream, AVFormatContext *outputFormatContext)
-: Transcoder(inputStream, outputFormatContext)
+CopyEncoder::CopyEncoder(const AVStream *inputStream, AVFormatContext *outputFormatContext, PacketReferences *outRefs)
+: Encoder(inputStream, outputFormatContext, outRefs), m_outputPacket(av_packet_alloc())
 {
+	if (m_outputPacket == nullptr)
+		errx(EXIT_FAILURE, "av_packet_alloc failed");
+
 	failOnAVERROR(avcodec_parameters_copy(m_outputStream->codecpar, inputStream->codecpar), "avcodec_parameters_copy");
         m_outputStream->codecpar->codec_tag = 0;
 }
 
-void PassthroughTranscoder::processPacket(const AVPacket *inputPacket)
+CopyEncoder::~CopyEncoder()
 {
-	AVPacket *outputPacket = av_packet_clone(inputPacket);
-	if (outputPacket == nullptr)
-		errx(EXIT_FAILURE, "av_packet_clone failed");
+	av_packet_free(&m_outputPacket);
+}
 
-	outputPacket->stream_index = m_outputStream->index;
-        outputPacket->pts = av_rescale_q_rnd(inputPacket->pts, m_inputStream->time_base, m_outputStream->time_base, AVRounding(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
-        outputPacket->dts = av_rescale_q_rnd(inputPacket->dts, m_inputStream->time_base, m_outputStream->time_base, AVRounding(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
-        outputPacket->duration = av_rescale_q(inputPacket->duration, m_inputStream->time_base, m_outputStream->time_base);
-
-	fprintf(stderr, " -> Output packet: Stream #0:%d (size %u) - pts %" PRIi64 " dts %" PRIi64 " duration %" PRIi64 "\n",
-		outputPacket->stream_index, outputPacket->size, outputPacket->pts, outputPacket->dts, outputPacket->duration);
-
-	failOnAVERROR(av_interleaved_write_frame(m_outputFormatContext, outputPacket), "av_write_frame");
-
-	av_packet_free(&outputPacket);
+void CopyEncoder::processPacket(const AVPacket *inputPacket)
+{
+	av_packet_ref(m_outputPacket, inputPacket);
+	finalizeAndWritePacket(inputPacket, m_outputPacket);
 }
