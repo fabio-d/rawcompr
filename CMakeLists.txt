@@ -26,6 +26,7 @@ link_libraries(PkgConfig::LIBAV)
 
 add_executable(rawcompr
 	commandline.cpp
+	decoders.cpp
 	encoders.cpp
 	libav.cpp
 	llrfile.cpp

@@ -16,6 +16,7 @@
  */
 
 #include "commandline.h"
+#include "decoders.h"
 #include "encoders.h"
 
 #include <err.h>
@@ -26,7 +27,6 @@
 int compress(const CommandLine &cmd)
 {
 	AVFormatContext *inputFormatContext = nullptr, *outputFormatContext = nullptr;
-	int ret;
 
 	const char *inputFilename = cmd.inputFile();
 	const char *outputFilename = cmd.outputFile();
@@ -119,6 +119,119 @@ int compress(const CommandLine &cmd)
 	return EXIT_SUCCESS;
 }
 
+int decompress(const CommandLine &cmd)
+{
+	AVFormatContext *inputFormatContext = nullptr;
+
+	const char *inputFilename = cmd.inputFile();
+	const char *outputFilename = cmd.outputFile();
+	const char *llrFilename = cmd.llrFile();
+
+	failOnAVERROR(avformat_open_input(&inputFormatContext, inputFilename, nullptr, nullptr), "avformat_open_input: %s", inputFilename);
+	failOnAVERROR(avformat_find_stream_info(inputFormatContext, nullptr), "avformat_find_stream_info");
+	av_dump_format(inputFormatContext, 0, inputFilename, false);
+
+	AVIOContext *llrFile, *outputFile;
+	failOnAVERROR(avio_open(&llrFile, llrFilename, AVIO_FLAG_READ), "avio_open: %s", llrFilename);
+	failOnAVERROR(avio_open(&outputFile, outputFilename, AVIO_FLAG_WRITE), "avio_open: %s", outputFilename);
+
+	std::map<int, Decoder*> decoders;
+	PacketReferences packetRefs;
+
+	readLLR(llrFile, &packetRefs, outputFile);
+	if (packetRefs.streams().size() != inputFormatContext->nb_streams)
+		errx(EXIT_FAILURE, "Stream count mismatch");
+
+	fprintf(stderr, "Decoders:\n");
+	for (unsigned int i = 0; i < inputFormatContext->nb_streams; i++)
+	{
+		const PacketReferences::StreamInfo &info = packetRefs.streams().at(i);
+
+		const AVStream *inputStream = inputFormatContext->streams[i];
+		AVCodecParameters *inputCodecParameters = inputStream->codecpar;
+
+		const char *codecName = avcodec_get_name(inputCodecParameters->codec_id); // never nullptr (according to documentation)
+		fprintf(stderr, "  Stream #0:%d: input_codec=%s output_codec=", inputStream->index, codecName);
+
+		Decoder *decoder;
+		switch (info.type)
+		{
+			case Video:
+			{
+				fprintf(stderr, "rawvideo %s\n", info.pixelFormat.c_str());
+
+				AVPixelFormat outputPixelFormat = av_get_pix_fmt(info.pixelFormat.c_str());
+				if (outputPixelFormat == AV_PIX_FMT_NONE)
+					errx(EXIT_FAILURE, "Invalid pixel format string");
+
+				decoder = new VideoDecoder(inputStream, outputPixelFormat);
+				break;
+			}
+			case Copy:
+			{
+				fprintf(stderr, "copy\n");
+				decoder = new CopyDecoder();
+				break;
+			}
+			default:
+				abort();
+		}
+
+		decoders.emplace(inputStream->index, decoder);
+	}
+
+	// Build reverse packet mapping (streamIndex, packetIndex, pts) -> (origPos, origSize)
+	std::map<std::tuple<int, size_t, int64_t>, std::pair<int64_t, int>> reverseRefs;
+	for (const auto &[origPos, e] : packetRefs.table())
+		reverseRefs.insert({{e.streamIndex, e.packetIndex, e.pts}, {origPos, e.origSize}});
+
+	// Decode (uncompress) packets
+	std::map<int, size_t> packetIndexPerStream;
+	AVPacket *packet = av_packet_alloc();
+	while (true)
+	{
+		int errnum = av_read_frame(inputFormatContext, packet);
+		if (errnum == AVERROR_EOF)
+			break;
+		else
+			failOnAVERROR(errnum, "av_read_frame");
+
+		size_t packetIndex = packetIndexPerStream[packet->stream_index]++;
+		fprintf(stderr, "Input packet: Stream #0:%d (index %zu) - pts %" PRIi64 " dts %" PRIi64 " duration %" PRIi64 "\n",
+			packet->stream_index, packetIndex, packet->pts, packet->dts, packet->duration);
+
+		auto it = reverseRefs.find({packet->stream_index, packetIndex, packet->pts});
+		if (it == reverseRefs.end())
+			errx(EXIT_FAILURE, "Failed to find destination block");
+
+		Decoder *decoder = decoders.at(packet->stream_index);
+		std::vector<uint8_t> uncompressedData = decoder->decodePacket(packet);
+		if (uncompressedData.size() != it->second.second) // check origSize
+			errx(EXIT_FAILURE, "Decoded to %zu bytes (actual) instead of %d bytes (expected)", uncompressedData.size(), it->second.second);
+
+		int64_t start = it->second.first; // origPos
+		fprintf(stderr, " -> %" PRIi64 "-%" PRIi64 ": writing %" PRIi64 " bytes\n", start, start + uncompressedData.size(), uncompressedData.size());
+
+		avio_seek(outputFile, start, SEEK_SET);
+		avio_write(outputFile, uncompressedData.data(), (int)uncompressedData.size());
+
+		reverseRefs.erase(it);
+		av_packet_unref(packet);
+	}
+
+	av_packet_free(&packet);
+
+	failOnAVERROR(avio_closep(&llrFile), "avio_closep");
+	failOnAVERROR(avio_closep(&outputFile), "avio_closep");
+
+	avformat_close_input(&inputFormatContext);
+
+	if (reverseRefs.empty())
+		return EXIT_SUCCESS;
+
+	errx(EXIT_FAILURE, "One or more source packets are missing");
+}
+
 int main(int argc, char *argv[])
 {
 	CommandLine cmd(argc, argv);
@@ -128,5 +241,5 @@ int main(int argc, char *argv[])
 	if (cmd.operation() == CommandLine::Compress)
 		return compress(cmd);
 	else
-		return EXIT_FAILURE; // not implemented yet
+		return decompress(cmd);
 }

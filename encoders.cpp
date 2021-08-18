@@ -83,6 +83,7 @@ VideoEncoder::VideoEncoder(const AVStream *inputStream, AVFormatContext *outputF
 
 	failOnAVERROR(avcodec_parameters_to_context(m_inputCodecContext, inputStream->codecpar), "avcodec_parameters_to_context");
 	failOnAVERROR(avcodec_open2(m_inputCodecContext, inputCodec, nullptr), "avcodec_open2");
+	outRefs->addVideoStream(m_inputCodecContext->pix_fmt);
 
 	// Setup encoder
 
@@ -167,6 +168,8 @@ CopyEncoder::CopyEncoder(const AVStream *inputStream, AVFormatContext *outputFor
 {
 	if (m_outputPacket == nullptr)
 		errx(EXIT_FAILURE, "av_packet_alloc failed");
+
+	outRefs->addCopyStream();
 
 	failOnAVERROR(avcodec_parameters_copy(m_outputStream->codecpar, inputStream->codecpar), "avcodec_parameters_copy");
         m_outputStream->codecpar->codec_tag = 0;

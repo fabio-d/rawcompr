@@ -21,12 +21,24 @@
 #include "libav.h"
 
 #include <map>
+#include <string>
+#include <vector>
+
+enum CodecType : char // These values are stored on-disk in LLR files
+{
+	Copy = 1,
+	Video = 2
+};
 
 class PacketReferences
 {
-	friend void writeLLR(AVIOContext *source, const PacketReferences *packetRefs, AVIOContext *dest);
-
 	public:
+		struct StreamInfo
+		{
+			CodecType type;
+			std::string pixelFormat;
+		};
+
 		struct ReferenceInfo
 		{
 			// Length of covered range in original file
@@ -38,13 +50,25 @@ class PacketReferences
 			int64_t pts;
 		};
 
+		void addVideoStream(AVPixelFormat pixelFormat);
+		void addCopyStream();
+
 		void addPacketReference(int streamIndex, size_t packetIndex, int64_t pts, int64_t origPos, int origSize);
 
+		const std::vector<StreamInfo> &streams() const;
+		const std::map<size_t, ReferenceInfo> &table() const;
+
 		void dump(FILE *dest) const;
-		void save(AVIOContext *dest) const;
+
+		void deserialize(AVIOContext *src);
+		void serialize(AVIOContext *dest) const;
 
 	private:
+		std::vector<StreamInfo> m_streams;
 		std::map<size_t, ReferenceInfo> m_table; // origPos -> other fields
 };
+
+void writeLLR(AVIOContext *inputFile, const PacketReferences *packetRefs, AVIOContext *llrFile);
+void readLLR(AVIOContext *llrFile, PacketReferences *outPacketRefs, AVIOContext *outputFile);
 
 #endif
