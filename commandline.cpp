@@ -34,6 +34,20 @@ static const std::map<std::string, std::string> defaultVideoCodecOptions
 };
 static const std::string defaultHashName = "MD5";
 
+static std::string defaultLibavLogLevel = "warning";
+static std::map<std::string, int> libavLogLevels =
+{
+	{ "quiet", AV_LOG_QUIET },
+	{ "panic", AV_LOG_PANIC },
+	{ "fatal", AV_LOG_FATAL },
+	{ "error", AV_LOG_ERROR },
+	{ "warning", AV_LOG_WARNING },
+	{ "info", AV_LOG_INFO },
+	{ "verbose", AV_LOG_VERBOSE },
+	{ "debug", AV_LOG_DEBUG },
+	{ "trace", AV_LOG_TRACE }
+};
+
 static AVCodecID parseVideoCodec(const std::string &name)
 {
 	if (name == "ffv1")
@@ -87,9 +101,11 @@ static std::string llrFileFromMkv(const char *argName, const std::string &argVal
 }
 
 CommandLine::CommandLine(int argc, char *argv[])
-: m_debugFlag(false), m_decompressFlag(false),
+: m_debugFlag(false), m_libavLogLevel(libavLogLevels.at(defaultLibavLogLevel)),
+  m_decompressFlag(false),
   m_videoCodec(parseVideoCodec(defaultVideoCodec)), m_videoCodecOptions(defaultVideoCodecOptions), m_hashName(defaultHashName)
 {
+	bool seenLibavLogLevel = false;
 	bool seenInputFile = false;
 	bool seenOutputFile = false;
 	bool seenVideoCodec = false;
@@ -134,6 +150,34 @@ process_positional_argument:
 			{
 				m_debugFlag = true;
 			}
+		}
+		else if (strcmp(argv[i], "--libavloglevel") == 0)
+		{
+			if (++i >= argc)
+			{
+				logWarning("Argument required: --libavloglevel LEVEL\n");
+				valid = false;
+			}
+			else if (seenLibavLogLevel)
+			{
+				logWarning("Option cannot be repeated more than once: --libavloglevel LEVEL\n");
+				valid = false;
+			}
+			else
+			{
+				auto it = libavLogLevels.find(argv[i]);
+				if (it != libavLogLevels.end())
+				{
+					m_libavLogLevel = it->second;
+				}
+				else
+				{
+					logWarning("Invalid libav log level: %s\n", argv[i]);
+					valid = false;
+				}
+			}
+
+			seenLibavLogLevel = true;
 		}
 		else if (strcmp(argv[i], "-d") == 0)
 		{
@@ -293,7 +337,9 @@ void CommandLine::help()
 	fprintf(stderr, " -d        Decompress instead of compressing\n");
 	fprintf(stderr, " -i INPUT  Input file\n");
 	fprintf(stderr, " OUTPUT    Output file\n");
-	fprintf(stderr, " --debug   Show debug messages from rawcompr\n");
+	fprintf(stderr, " --debug   Enable debug output from rawcompr\n");
+	fprintf(stderr, " --libavloglevel LEVEL\n");
+	fprintf(stderr, "           Set libav log level\n");
 	fprintf(stderr, "\n");
 
 	fprintf(stderr, "Compression-only parameters:\n");
@@ -322,6 +368,11 @@ void CommandLine::help()
 bool CommandLine::enableLogDebug() const
 {
 	return m_debugFlag;
+}
+
+int CommandLine::libavLogLevel() const
+{
+	return m_libavLogLevel;
 }
 
 CommandLine::Operation CommandLine::operation() const

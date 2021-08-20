@@ -21,6 +21,7 @@
 #include "libav.h"
 
 #include <map>
+#include <optional>
 #include <string>
 
 class CommandLine
@@ -35,6 +36,7 @@ class CommandLine
 		CommandLine(int argc, char *argv[]);
 
 		bool enableLogDebug() const;
+		int libavLogLevel() const;
 
 		Operation operation() const;
 
@@ -49,7 +51,10 @@ class CommandLine
 	private:
 		void help();
 
-		bool m_debugFlag, m_decompressFlag;
+		bool m_debugFlag;
+		int m_libavLogLevel;
+
+		bool m_decompressFlag;
 		std::string m_inputFile, m_outputFile, m_llrFile;
 
 		AVCodecID m_videoCodec;

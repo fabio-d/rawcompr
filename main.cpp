@@ -288,9 +288,8 @@ int main(int argc, char *argv[])
 {
 	CommandLine cmd(argc, argv);
 
+	av_log_set_level(cmd.libavLogLevel());
 	setupLogDebug(cmd.enableLogDebug());
-
-	//av_log_set_level(AV_LOG_DEBUG);
 
 	if (cmd.operation() == CommandLine::Compress)
 		return compress(cmd);
