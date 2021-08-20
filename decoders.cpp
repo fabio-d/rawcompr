@@ -17,7 +17,7 @@
 
 #include "decoders.h"
 
-#include <err.h>
+#include "log.h"
 
 Decoder::Decoder()
 {
@@ -32,10 +32,10 @@ VideoDecoder::VideoDecoder(const AVStream *inputStream, AVPixelFormat outputPixe
   m_outputPacket(av_packet_alloc())
 {
 	if (m_inputFrame == nullptr || m_outputFrame == nullptr)
-		errx(EXIT_FAILURE, "av_frame_alloc failed");
+		logError("av_frame_alloc failed\n");
 
 	if (m_outputPacket == nullptr)
-		errx(EXIT_FAILURE, "av_packet_alloc failed");
+		logError("av_packet_alloc failed\n");
 
 	// Setup decoder
 
@@ -43,7 +43,7 @@ VideoDecoder::VideoDecoder(const AVStream *inputStream, AVPixelFormat outputPixe
 
 	m_inputCodecContext = avcodec_alloc_context3(inputCodec);
 	if (m_inputCodecContext == nullptr)
-		errx(EXIT_FAILURE, "avcodec_alloc_context3 failed");
+		logError("avcodec_alloc_context3 failed\n");
 
 	failOnAVERROR(avcodec_parameters_to_context(m_inputCodecContext, inputStream->codecpar), "avcodec_parameters_to_context");
 	failOnAVERROR(avcodec_open2(m_inputCodecContext, inputCodec, nullptr), "avcodec_open2");
@@ -54,7 +54,7 @@ VideoDecoder::VideoDecoder(const AVStream *inputStream, AVPixelFormat outputPixe
 
 	m_outputCodecContext = avcodec_alloc_context3(outputCodec);
 	if (m_outputCodecContext == nullptr)
-		errx(EXIT_FAILURE, "avcodec_alloc_context3 failed");
+		logError("avcodec_alloc_context3 failed\n");
 
 	failOnAVERROR(avcodec_parameters_to_context(m_outputCodecContext, inputStream->codecpar), "avcodec_parameters_to_context");
 	m_outputCodecContext->codec_id = AV_CODEC_ID_RAWVIDEO;
@@ -96,10 +96,10 @@ std::vector<uint8_t> VideoDecoder::decodePacket(const AVPacket *inputPacket)
 	failOnAVERROR(avcodec_send_packet(m_inputCodecContext, inputPacket), "avcodec_send_packet");
 	failOnAVERROR(avcodec_receive_frame(m_inputCodecContext, m_inputFrame), "avcodec_receive_frame");
 
-	fprintf(stderr, " -> Decoded %dx%d %s pts %" PRIi64 "%s\n", m_inputFrame->width, m_inputFrame->height,
+	logDebug(" -> Decoded %dx%d %s pts %" PRIi64 "%s\n", m_inputFrame->width, m_inputFrame->height,
 		av_get_pix_fmt_name((AVPixelFormat)m_inputFrame->format), m_inputFrame->pts, m_inputFrame->key_frame ? " KEYFRAME" : "");
 
-	fprintf(stderr, " -> Converting from %s to %s\n",
+	logDebug(" -> Converting from %s to %s\n",
 		av_get_pix_fmt_name((AVPixelFormat)m_inputFrame->format),
 		av_get_pix_fmt_name((AVPixelFormat)m_outputFrame->format));
 

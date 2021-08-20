@@ -18,8 +18,8 @@
 #include "commandline.h"
 #include "decoders.h"
 #include "encoders.h"
+#include "log.h"
 
-#include <err.h>
 #include <map>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,7 +36,7 @@ int compress(const CommandLine &cmd)
 	failOnAVERROR(avformat_find_stream_info(inputFormatContext, nullptr), "avformat_find_stream_info");
 	av_dump_format(inputFormatContext, 0, inputFilename, false);
 
-	fprintf(stderr, "Encoders:\n");
+	logDebug("Encoders:\n");
 	failOnAVERROR(avformat_alloc_output_context2(&outputFormatContext, nullptr, "matroska", outputFilename), "avformat_alloc_output_context2: %s", outputFilename);
 
 	std::map<int, Encoder*> encoders;
@@ -48,12 +48,12 @@ int compress(const CommandLine &cmd)
 		AVCodecParameters *inputCodecParameters = inputStream->codecpar;
 
 		const char *codecName = avcodec_get_name(inputCodecParameters->codec_id); // never nullptr (according to documentation)
-		fprintf(stderr, "  Stream #0:%d: input_codec=%s output_codec=", inputStream->index, codecName);
+		logDebug("  Stream #0:%d: input_codec=%s output_codec=", inputStream->index, codecName);
 
 		Encoder *encoder = nullptr;
 		if (strcmp(codecName, "rawvideo") == 0)
 		{
-			fprintf(stderr, "%s\n", avcodec_get_name(cmd.videoCodec()));
+			logDebug("%s\n", avcodec_get_name(cmd.videoCodec()));
 
 			AVDictionary *opts = nullptr;
 			cmd.fillVideoCodecOptions(&opts);
@@ -63,7 +63,7 @@ int compress(const CommandLine &cmd)
 
 		if (encoder == nullptr)
 		{
-			fprintf(stderr, "copy\n");
+			logDebug("copy\n");
 			encoder = new CopyEncoder(inputStream, outputFormatContext, &packetRefs);
 		}
 
@@ -89,7 +89,7 @@ int compress(const CommandLine &cmd)
 		else
 			failOnAVERROR(errnum, "av_read_frame");
 
-		fprintf(stderr, "Input packet: Stream #0:%d (pos %" PRIi64 " size %u) - pts %" PRIi64 " dts %" PRIi64 " duration %" PRIi64 "\n",
+		logDebug("Input packet: Stream #0:%d (pos %" PRIi64 " size %u) - pts %" PRIi64 " dts %" PRIi64 " duration %" PRIi64 "\n",
 			packet->stream_index, packet->pos, packet->size, packet->pts, packet->dts, packet->duration);
 
 		Encoder *encoder = encoders.at(packet->stream_index);
@@ -140,9 +140,9 @@ int decompress(const CommandLine &cmd)
 
 	readLLR(llrFile, &packetRefs, outputFile);
 	if (packetRefs.streams().size() != inputFormatContext->nb_streams)
-		errx(EXIT_FAILURE, "Stream count mismatch");
+		logError("Stream count mismatch\n");
 
-	fprintf(stderr, "Decoders:\n");
+	logDebug("Decoders:\n");
 	for (unsigned int i = 0; i < inputFormatContext->nb_streams; i++)
 	{
 		const PacketReferences::StreamInfo &info = packetRefs.streams().at(i);
@@ -151,25 +151,25 @@ int decompress(const CommandLine &cmd)
 		AVCodecParameters *inputCodecParameters = inputStream->codecpar;
 
 		const char *codecName = avcodec_get_name(inputCodecParameters->codec_id); // never nullptr (according to documentation)
-		fprintf(stderr, "  Stream #0:%d: input_codec=%s output_codec=", inputStream->index, codecName);
+		logDebug("  Stream #0:%d: input_codec=%s output_codec=", inputStream->index, codecName);
 
 		Decoder *decoder;
 		switch (info.type)
 		{
 			case Video:
 			{
-				fprintf(stderr, "rawvideo %s\n", info.pixelFormat.c_str());
+				logDebug("rawvideo %s\n", info.pixelFormat.c_str());
 
 				AVPixelFormat outputPixelFormat = av_get_pix_fmt(info.pixelFormat.c_str());
 				if (outputPixelFormat == AV_PIX_FMT_NONE)
-					errx(EXIT_FAILURE, "Invalid pixel format string");
+					logError("Invalid pixel format string\n");
 
 				decoder = new VideoDecoder(inputStream, outputPixelFormat);
 				break;
 			}
 			case Copy:
 			{
-				fprintf(stderr, "copy\n");
+				logDebug("copy\n");
 				decoder = new CopyDecoder();
 				break;
 			}
@@ -197,20 +197,20 @@ int decompress(const CommandLine &cmd)
 			failOnAVERROR(errnum, "av_read_frame");
 
 		size_t packetIndex = packetIndexPerStream[packet->stream_index]++;
-		fprintf(stderr, "Input packet: Stream #0:%d (index %zu) - pts %" PRIi64 " dts %" PRIi64 " duration %" PRIi64 "\n",
+		logDebug("Input packet: Stream #0:%d (index %zu) - pts %" PRIi64 " dts %" PRIi64 " duration %" PRIi64 "\n",
 			packet->stream_index, packetIndex, packet->pts, packet->dts, packet->duration);
 
 		auto it = reverseRefs.find({packet->stream_index, packetIndex, packet->pts});
 		if (it == reverseRefs.end())
-			errx(EXIT_FAILURE, "Failed to find destination block");
+			logError("Failed to find destination block\n");
 
 		Decoder *decoder = decoders.at(packet->stream_index);
 		std::vector<uint8_t> uncompressedData = decoder->decodePacket(packet);
 		if (uncompressedData.size() != it->second.second) // check origSize
-			errx(EXIT_FAILURE, "Decoded to %zu bytes (actual) instead of %d bytes (expected)", uncompressedData.size(), it->second.second);
+			logError("Decoded to %zu bytes (actual) instead of %d bytes (expected)\n", uncompressedData.size(), it->second.second);
 
 		int64_t start = it->second.first; // origPos
-		fprintf(stderr, " -> %" PRIi64 "-%" PRIi64 ": writing %" PRIi64 " bytes\n", start, start + uncompressedData.size(), uncompressedData.size());
+		logDebug(" -> %" PRIi64 "-%" PRIi64 ": writing %" PRIi64 " bytes\n", start, start + uncompressedData.size(), uncompressedData.size());
 
 		avio_seek(outputFile, start, SEEK_SET);
 		avio_write(outputFile, uncompressedData.data(), (int)uncompressedData.size());
@@ -229,12 +229,14 @@ int decompress(const CommandLine &cmd)
 	if (reverseRefs.empty())
 		return EXIT_SUCCESS;
 
-	errx(EXIT_FAILURE, "One or more source packets are missing");
+	logError("One or more source packets are missing\n");
 }
 
 int main(int argc, char *argv[])
 {
 	CommandLine cmd(argc, argv);
+
+	setupLogDebug(cmd.enableLogDebug());
 
 	//av_log_set_level(AV_LOG_DEBUG);
 

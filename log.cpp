@@ -15,44 +15,51 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef COMMANDLINE_H
-#define COMMANDLINE_H
+#include "log.h"
 
-#include "libav.h"
+#include <errno.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
 
-#include <map>
-#include <string>
+static bool enableDebugMessages = false;
 
-class CommandLine
+void logError(const char *fmt, ...)
 {
-	public:
-		enum Operation
-		{
-			Compress,
-			Decompress
-		};
+	va_list ap;
+	va_start(ap, fmt);
 
-		CommandLine(int argc, char *argv[]);
+	fprintf(stderr, "%s: ", program_invocation_short_name);
+	vfprintf(stderr, fmt, ap);
 
-		bool enableLogDebug() const;
+	va_end(ap);
 
-		Operation operation() const;
+	exit(EXIT_FAILURE);
+}
 
-		const char *inputFile() const;
-		const char *outputFile() const;
-		const char *llrFile() const;
+void logWarning(const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
 
-		AVCodecID videoCodec() const;
-		void fillVideoCodecOptions(AVDictionary **outDict) const;
+	fprintf(stderr, "%s: ", program_invocation_short_name);
+	vfprintf(stderr, fmt, ap);
 
-	private:
-		void help();
+	va_end(ap);
+}
 
-		bool m_debugFlag, m_decompressFlag;
-		std::string m_inputFile, m_outputFile, m_llrFile;
+void setupLogDebug(bool enable)
+{
+	enableDebugMessages = enable;
+}
 
-		AVCodecID m_videoCodec;
-		std::map<std::string, std::string> m_videoCodecOptions;
-};
+void logDebug(const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
 
-#endif
+	if (enableDebugMessages)
+		vfprintf(stderr, fmt, ap);
+
+	va_end(ap);
+}

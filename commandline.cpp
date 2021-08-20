@@ -17,8 +17,9 @@
 
 #include "commandline.h"
 
+#include "log.h"
+
 #include <assert.h>
-#include <err.h>
 #include <string.h>
 
 static const std::string defaultVideoCodec = "ffv1";
@@ -39,7 +40,7 @@ static AVCodecID parseVideoCodec(const std::string &name)
 	if (name == "huffyuv")
 		return AV_CODEC_ID_HUFFYUV;
 
-	warnx("Invalid or unsupported video codec: %s", name.c_str());
+	logWarning("Invalid or unsupported video codec: %s\n", name.c_str());
 	return AV_CODEC_ID_NONE;
 }
 
@@ -57,14 +58,14 @@ static std::pair<std::map<std::string, std::string>, bool> parseCodecOptions(cha
 		std::string key(*args, eqSign), value(eqSign + 1);
 		if (key.empty() || value.empty())
 		{
-			warnx("Invalid codec option format (expected key=value): %s", *args);
+			logWarning("Invalid codec option format (expected key=value): %s\n", *args);
 			errorFlag = true;
 			break;
 		}
 
 		if (result.emplace(key, value).second == false)
 		{
-			warnx("Codec option set more than once: %s", key.c_str());
+			logWarning("Codec option set more than once: %s\n", key.c_str());
 			errorFlag = true;
 			break;
 		}
@@ -80,12 +81,12 @@ static std::string llrFileFromMkv(const char *argName, const std::string &argVal
 	if (argValue.length() >= 4 && argValue.substr(argValue.length() - 4) == ".mkv")
 		return argValue.substr(0, argValue.length() - 4) + ".llr";
 
-	warnx("Argument error: %s must end with .mkv", argName);
+	logWarning("Argument error: %s must end with .mkv\n", argName);
 	return "";
 }
 
 CommandLine::CommandLine(int argc, char *argv[])
-: m_decompressFlag(false),
+: m_debugFlag(false), m_decompressFlag(false),
   m_videoCodec(parseVideoCodec(defaultVideoCodec)), m_videoCodecOptions(defaultVideoCodecOptions)
 {
 	bool seenInputFile = false;
@@ -107,7 +108,7 @@ CommandLine::CommandLine(int argc, char *argv[])
 process_positional_argument:
 			if (seenOutputFile)
 			{
-				warnx("Argument cannot be repeated more than once: OUTPUT");
+				logWarning("Argument cannot be repeated more than once: OUTPUT\n");
 			}
 			else
 			{
@@ -120,11 +121,23 @@ process_positional_argument:
 			help();
 			exit(EXIT_SUCCESS);
 		}
+		else if (strcmp(argv[i], "--debug") == 0)
+		{
+			if (m_debugFlag)
+			{
+				logWarning("Option cannot be repeated more than once: --debug\n");
+				valid = false;
+			}
+			else
+			{
+				m_debugFlag = true;
+			}
+		}
 		else if (strcmp(argv[i], "-d") == 0)
 		{
 			if (m_decompressFlag)
 			{
-				warnx("Option cannot be repeated more than once: -d");
+				logWarning("Option cannot be repeated more than once: -d\n");
 				valid = false;
 			}
 			else
@@ -136,12 +149,12 @@ process_positional_argument:
 		{
 			if (++i >= argc)
 			{
-				warnx("Argument required: -i INPUT");
+				logWarning("Argument required: -i INPUT\n");
 				valid = false;
 			}
 			else if (seenInputFile)
 			{
-				warnx("Option cannot be repeated more than once: -i INPUT");
+				logWarning("Option cannot be repeated more than once: -i INPUT\n");
 				valid = false;
 			}
 			else
@@ -155,12 +168,12 @@ process_positional_argument:
 		{
 			if (++i >= argc)
 			{
-				warnx("Argument required: -v CODEC_NAME [key=value ...]");
+				logWarning("Argument required: -v CODEC_NAME [key=value ...]\n");
 				valid = false;
 			}
 			else if (seenVideoCodec)
 			{
-				warnx("Option cannot be repeated more than once: -v CODEC_NAME [key=value ...]");
+				logWarning("Option cannot be repeated more than once: -v CODEC_NAME [key=value ...]\n");
 				valid = false;
 			}
 			else
@@ -183,7 +196,7 @@ process_positional_argument:
 		}
 		else if (argv[i][0] == '-')
 		{
-			warnx("Invalid option: %s", argv[i]);
+			logWarning("Invalid option: %s\n", argv[i]);
 			valid = false;
 		}
 		else
@@ -196,14 +209,14 @@ process_positional_argument:
 	{
 		if (seenVideoCodec)
 		{
-			warnx("Option can only be used if -d is not set: -v CODEC_NAME [key=value ...]");
+			logWarning("Option can only be used if -d is not set: -v CODEC_NAME [key=value ...]\n");
 			valid = false;
 		}
 	}
 
 	if (!seenInputFile)
 	{
-		warnx("Missing required option: -i INPUT");
+		logWarning("Missing required option: -i INPUT\n");
 		valid = false;
 	}
 	else if (m_decompressFlag)
@@ -215,7 +228,7 @@ process_positional_argument:
 
 	if (!seenOutputFile)
 	{
-		warnx("Missing required option: OUTPUT");
+		logWarning("Missing required option: OUTPUT\n");
 		valid = false;
 	}
 	else if (!m_decompressFlag)
@@ -231,14 +244,16 @@ process_positional_argument:
 
 void CommandLine::help()
 {
-	fprintf(stderr, "Losslessly compress raw streams in multimedia files\n");
-	fprintf(stderr, "Usage: %s [-d] [CODEC PARAMETERS] -i INPUT OUTPUT\n", program_invocation_short_name);
+	fprintf(stderr, "Losslessly compress raw streams in multimedia files.\n");
+	fprintf(stderr, "\n");
+	fprintf(stderr, "Usage: %s [-d] [OTHER OPTIONS] -i INPUT OUTPUT\n", program_invocation_short_name);
 	fprintf(stderr, "\n");
 
 	fprintf(stderr, "Basic options:\n");
 	fprintf(stderr, " -d        Decompress instead of compressing\n");
 	fprintf(stderr, " -i INPUT  Input file\n");
 	fprintf(stderr, " OUTPUT    Output file\n");
+	fprintf(stderr, " --debug   Show debug messages from rawcompr\n");
 	fprintf(stderr, "\n");
 
 	fprintf(stderr, "Codec parameters (compression only):\n");
@@ -255,6 +270,11 @@ void CommandLine::help()
 	for (const auto &[k, v] : defaultVideoCodecOptions)
 		fprintf(stderr, " %s=%s", k.c_str(), v.c_str());
 	fprintf(stderr, "\n");
+}
+
+bool CommandLine::enableLogDebug() const
+{
+	return m_debugFlag;
 }
 
 CommandLine::Operation CommandLine::operation() const

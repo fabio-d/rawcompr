@@ -17,14 +17,14 @@
 
 #include "encoders.h"
 
-#include <err.h>
+#include "log.h"
 
 Encoder::Encoder(const AVStream *inputStream, AVFormatContext *outputFormatContext, PacketReferences *outRefs)
 : m_inputStream(inputStream), m_outputFormatContext(outputFormatContext), m_outRefs(outRefs), m_outPacketIndex(0)
 {
 	m_outputStream = avformat_new_stream(outputFormatContext, nullptr);
 	if (m_outputStream == nullptr)
-		errx(EXIT_FAILURE, "avformat_new_stream failed");
+		logError("avformat_new_stream failed\n");
 }
 
 Encoder::~Encoder()
@@ -46,7 +46,7 @@ void Encoder::finalizeAndWritePacket(const AVPacket *inputPacket, AVPacket *outp
 	outputPacket->duration = av_rescale_q(inputPacket->duration,
 		m_inputStream->time_base, m_outputStream->time_base);
 
-	fprintf(stderr, " -> Output packet: Stream #0:%d (index %zu size %u) - pts %" PRIi64 " dts %" PRIi64 " duration %" PRIi64 "\n",
+	logDebug(" -> Output packet: Stream #0:%d (index %zu size %u) - pts %" PRIi64 " dts %" PRIi64 " duration %" PRIi64 "\n",
 		outputPacket->stream_index, m_outPacketIndex, outputPacket->size, outputPacket->pts, outputPacket->dts, outputPacket->duration);
 
 	m_outRefs->addPacketReference(m_outputStream->index, m_outPacketIndex, outputPacket->pts, inputPacket->pos, inputPacket->size);
@@ -61,10 +61,10 @@ VideoEncoder::VideoEncoder(const AVStream *inputStream, AVFormatContext *outputF
   m_outputPacket(av_packet_alloc())
 {
 	if (m_inputFrame == nullptr || m_outputFrame == nullptr)
-		errx(EXIT_FAILURE, "av_frame_alloc failed");
+		logError("av_frame_alloc failed\n");
 
 	if (m_outputPacket == nullptr)
-		errx(EXIT_FAILURE, "av_packet_alloc failed");
+		logError("av_packet_alloc failed\n");
 
 	failOnAVERROR(avcodec_parameters_copy(m_outputStream->codecpar, inputStream->codecpar), "avcodec_parameters_copy");
 	m_outputStream->codecpar->codec_id = outputCodecID;
@@ -79,7 +79,7 @@ VideoEncoder::VideoEncoder(const AVStream *inputStream, AVFormatContext *outputF
 
 	m_inputCodecContext = avcodec_alloc_context3(inputCodec);
 	if (m_inputCodecContext == nullptr)
-		errx(EXIT_FAILURE, "avcodec_alloc_context3 failed");
+		logError("avcodec_alloc_context3 failed\n");
 
 	failOnAVERROR(avcodec_parameters_to_context(m_inputCodecContext, inputStream->codecpar), "avcodec_parameters_to_context");
 	failOnAVERROR(avcodec_open2(m_inputCodecContext, inputCodec, nullptr), "avcodec_open2");
@@ -91,7 +91,7 @@ VideoEncoder::VideoEncoder(const AVStream *inputStream, AVFormatContext *outputF
 
 	m_outputCodecContext = avcodec_alloc_context3(outputCodec);
 	if (m_outputCodecContext == nullptr)
-		errx(EXIT_FAILURE, "avcodec_alloc_context3 failed");
+		logError("avcodec_alloc_context3 failed\n");
 
 	failOnAVERROR(avcodec_parameters_to_context(m_outputCodecContext, m_outputStream->codecpar), "avcodec_parameters_to_context");
 	m_outputCodecContext->time_base = inputStream->time_base;
@@ -136,10 +136,10 @@ void VideoEncoder::processPacket(const AVPacket *inputPacket)
 	failOnAVERROR(avcodec_send_packet(m_inputCodecContext, inputPacket), "avcodec_send_packet");
 	failOnAVERROR(avcodec_receive_frame(m_inputCodecContext, m_inputFrame), "avcodec_receive_frame");
 
-	fprintf(stderr, " -> Decoded %dx%d %s pts %" PRIi64 "%s\n", m_inputFrame->width, m_inputFrame->height,
+	logDebug(" -> Decoded %dx%d %s pts %" PRIi64 "%s\n", m_inputFrame->width, m_inputFrame->height,
 		av_get_pix_fmt_name((AVPixelFormat)m_inputFrame->format), m_inputFrame->pts, m_inputFrame->key_frame ? " KEYFRAME" : "");
 
-	fprintf(stderr, " -> Converting from %s to %s\n",
+	logDebug(" -> Converting from %s to %s\n",
 		av_get_pix_fmt_name((AVPixelFormat)m_inputFrame->format),
 		av_get_pix_fmt_name((AVPixelFormat)m_outputFrame->format));
 
@@ -154,7 +154,7 @@ void VideoEncoder::processPacket(const AVPacket *inputPacket)
 	failOnAVERROR(avcodec_send_frame(m_outputCodecContext, m_outputFrame), "avcodec_send_frame");
 	failOnAVERROR(avcodec_receive_packet(m_outputCodecContext, m_outputPacket), "avcodec_receive_packet");
 
-	fprintf(stderr, " -> Encoded %dx%d %s pts %" PRIi64 "%s\n", m_outputFrame->width, m_outputFrame->height,
+	logDebug(" -> Encoded %dx%d %s pts %" PRIi64 "%s\n", m_outputFrame->width, m_outputFrame->height,
 		av_get_pix_fmt_name((AVPixelFormat)m_outputFrame->format), m_outputFrame->pts,
 		(m_outputPacket->flags & AV_PKT_FLAG_KEY) ? " KEYFRAME" : "");
 
@@ -167,7 +167,7 @@ CopyEncoder::CopyEncoder(const AVStream *inputStream, AVFormatContext *outputFor
 : Encoder(inputStream, outputFormatContext, outRefs), m_outputPacket(av_packet_alloc())
 {
 	if (m_outputPacket == nullptr)
-		errx(EXIT_FAILURE, "av_packet_alloc failed");
+		logError("av_packet_alloc failed\n");
 
 	outRefs->addCopyStream();
 

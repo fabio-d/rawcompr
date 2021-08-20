@@ -17,9 +17,10 @@
 
 #include "llrfile.h"
 
+#include "log.h"
+
 #include <err.h>
 #include <inttypes.h>
-#include <stdlib.h>
 
 static constexpr int32_t LLR_MAGIC_SIGNATURE = MKBETAG('L', 'L', 'R', '\0');
 static constexpr int64_t LLR_BUFFER_SIZE = 4096;
@@ -51,7 +52,7 @@ void PacketReferences::addPacketReference(int streamIndex, size_t packetIndex, i
 	if (!inserted)
 	{
 bug_halt:
-		errx(EXIT_FAILURE, "addPacketReference: overlapping range, probably a bug. halting!");
+		logError("addPacketReference: overlapping range, probably a bug. halting!\n");
 	}
 
 	if (++it != m_table.end() && it->first < origPos + origSize)
@@ -68,33 +69,33 @@ const std::map<size_t, PacketReferences::ReferenceInfo> &PacketReferences::table
 	return m_table;
 }
 
-void PacketReferences::dump(FILE *dest) const
+void PacketReferences::debugDump() const
 {
-	fprintf(dest, "Streams (total %zu):\n", m_streams.size());
+	logDebug("Streams (total %zu):\n", m_streams.size());
 
 	for (size_t i = 0; i < m_streams.size(); i++)
 	{
 		const StreamInfo &info = m_streams.at(i);
-		fprintf(dest, "  Stream #0:%zu: ", i);
+		logDebug("  Stream #0:%zu: ", i);
 
 		switch (info.type)
 		{
 			case Video:
-				fprintf(dest, "video %s\n", info.pixelFormat.c_str());
+				logDebug("video %s\n", info.pixelFormat.c_str());
 				break;
 			case Copy:
-				fprintf(dest, "copy\n");
+				logDebug("copy\n");
 				break;
 			default:
 				abort();
 		}
 	}
 
-	fprintf(dest, "Packet references (total %zu):\n", m_table.size());
+	logDebug("Packet references (total %zu):\n", m_table.size());
 
 	for (const auto &[origPos, e] : m_table)
 	{
-		fprintf(dest, "  %" PRIi64 "-%" PRIi64 ": Stream #0:%d (index %zu) - pts %" PRIi64 " size %d\n",
+		logDebug("  %" PRIi64 "-%" PRIi64 ": Stream #0:%d (index %zu) - pts %" PRIi64 " size %d\n",
 			origPos, origPos + e.origSize, e.streamIndex, e.packetIndex, e.pts, e.origSize);
 	}
 }
@@ -188,7 +189,7 @@ void writeLLR(AVIOContext *inputFile, const PacketReferences *packetRefs, AVIOCo
 {
 	unsigned char buffer[LLR_BUFFER_SIZE];
 
-	fprintf(stderr, "Writing LLR file:\n");
+	logDebug("Writing LLR file:\n");
 	avio_wb32(llrFile, LLR_MAGIC_SIGNATURE);
 
 	int64_t inputSize = avio_size(inputFile);
@@ -199,18 +200,18 @@ void writeLLR(AVIOContext *inputFile, const PacketReferences *packetRefs, AVIOCo
 
 	auto embedChunk = [&](int64_t start, int64_t end)
 	{
-		fprintf(stderr, "  %" PRIi64 "-%" PRIi64 ": Embedding - size %" PRIi64 "\n", start, end, end - start);
+		logDebug("  %" PRIi64 "-%" PRIi64 ": Embedding - size %" PRIi64 "\n", start, end, end - start);
 		avio_seek(inputFile, start, SEEK_SET);
 
 		while (start != end)
 		{
 			int64_t r = avio_read_partial(inputFile, buffer, std::min(LLR_BUFFER_SIZE, end - start));
 			if (r == 0)
-				errx(EXIT_FAILURE, "avio_read_partial: Premature end of file");
+				logError("avio_read_partial: Premature end of file\n");
 			else if (r < 0)
 				failOnAVERROR(r, "avio_read_partial");
 
-			fprintf(stderr, "   -> %" PRIi64 "-%" PRIi64 ": size %" PRIi64 "\n", start, start + r, r);
+			logDebug("   -> %" PRIi64 "-%" PRIi64 ": size %" PRIi64 "\n", start, start + r, r);
 
 			avio_write(llrFile, buffer, r);
 			start += r;
@@ -227,7 +228,7 @@ void writeLLR(AVIOContext *inputFile, const PacketReferences *packetRefs, AVIOCo
 
 		prevOffset += e.origSize;
 
-		fprintf(stderr, "  %" PRIi64 "-%" PRIi64 ": Referencing stream #0:%d (index %zu) - pts %" PRIi64 " size %d\n",
+		logDebug("  %" PRIi64 "-%" PRIi64 ": Referencing stream #0:%d (index %zu) - pts %" PRIi64 " size %d\n",
 			origPos, prevOffset, e.streamIndex, e.packetIndex, e.pts, e.origSize);
 	}
 
@@ -240,30 +241,30 @@ void readLLR(AVIOContext *llrFile, PacketReferences *outPacketRefs, AVIOContext 
 	unsigned char buffer[LLR_BUFFER_SIZE];
 
 	if (avio_rb32(llrFile) != LLR_MAGIC_SIGNATURE)
-		err(EXIT_FAILURE, "Invalid LLR file signature");
+		logError("Invalid LLR file signature\n");
 
-	fprintf(stderr, "Reading LLR file:\n");
+	logDebug("Reading LLR file:\n");
 
 	int64_t outputSize = avio_rb64(llrFile);
 	int64_t prevOffset = 0;
 
-	fprintf(stderr, "  Original file size: %" PRIi64 "\n", outputSize);
+	logDebug("  Original file size: %" PRIi64 "\n", outputSize);
 	outPacketRefs->deserialize(llrFile);
 
 	auto loadChunk = [&](int64_t start, int64_t end)
 	{
-		fprintf(stderr, "  %" PRIi64 "-%" PRIi64 ": Loading - size %" PRIi64 "\n", start, end, end - start);
+		logDebug("  %" PRIi64 "-%" PRIi64 ": Loading - size %" PRIi64 "\n", start, end, end - start);
 		avio_seek(outputFile, start, SEEK_SET);
 
 		while (start != end)
 		{
 			int64_t r = avio_read_partial(llrFile, buffer, std::min(LLR_BUFFER_SIZE, end - start));
 			if (r == 0)
-				errx(EXIT_FAILURE, "avio_read_partial: Premature end of file");
+				logError("avio_read_partial: Premature end of file\n");
 			else if (r < 0)
 				failOnAVERROR(r, "avio_read_partial");
 
-			fprintf(stderr, "   -> %" PRIi64 "-%" PRIi64 ": size %" PRIi64 "\n", start, start + r, r);
+			logDebug("   -> %" PRIi64 "-%" PRIi64 ": size %" PRIi64 "\n", start, start + r, r);
 
 			avio_write(outputFile, buffer, r);
 			start += r;

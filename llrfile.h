@@ -58,7 +58,7 @@ class PacketReferences
 		const std::vector<StreamInfo> &streams() const;
 		const std::map<size_t, ReferenceInfo> &table() const;
 
-		void dump(FILE *dest) const;
+		void debugDump() const;
 
 		void deserialize(AVIOContext *src);
 		void serialize(AVIOContext *dest) const;

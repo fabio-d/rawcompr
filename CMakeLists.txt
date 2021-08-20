@@ -30,5 +30,6 @@ add_executable(rawcompr
 	encoders.cpp
 	libav.cpp
 	llrfile.cpp
+	log.cpp
 	main.cpp
 )
