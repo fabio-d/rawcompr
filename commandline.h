@@ -44,6 +44,7 @@ class CommandLine
 
 		AVCodecID videoCodec() const;
 		void fillVideoCodecOptions(AVDictionary **outDict) const;
+		std::string hashName() const;
 
 	private:
 		void help();
@@ -53,6 +54,7 @@ class CommandLine
 
 		AVCodecID m_videoCodec;
 		std::map<std::string, std::string> m_videoCodecOptions;
+		std::string m_hashName;
 };
 
 #endif

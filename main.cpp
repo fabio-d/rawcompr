@@ -24,7 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-int compress(const CommandLine &cmd)
+static int compress(const CommandLine &cmd)
 {
 	AVFormatContext *inputFormatContext = nullptr, *outputFormatContext = nullptr;
 
@@ -100,8 +100,7 @@ int compress(const CommandLine &cmd)
 
 	av_packet_free(&packet);
 
-	//packetRefs.dump(stderr);
-	writeLLR(inputFormatContext->pb, &packetRefs, llrFile);
+	writeLLR(inputFormatContext->pb, &packetRefs, llrFile, cmd.hashName().c_str());
 
 	failOnAVERROR(av_write_trailer(outputFormatContext), "av_write_trailer");
 
@@ -119,7 +118,58 @@ int compress(const CommandLine &cmd)
 	return EXIT_SUCCESS;
 }
 
-int decompress(const CommandLine &cmd)
+static bool verifyHash(AVIOContext *file, int64_t fileSize, const char *hashName, const std::vector<uint8_t> &expectedHash)
+{
+	static unsigned char buffer[4096];
+
+	AVHashContext *hashCtx;
+	int r = av_hash_alloc(&hashCtx, hashName);
+	if (r == AVERROR(EINVAL))
+		logError("Hash verification failed: algorithm \"%s\" is not supported (is libavutil up to date?)\n", hashName);
+
+	failOnAVERROR(r, "av_hash_alloc");
+	av_hash_init(hashCtx);
+
+	int hashSize = av_hash_get_size(hashCtx);
+	if (hashSize != expectedHash.size())
+		logError("Hash verification failed: hash size mismatch\n");
+
+	int64_t pos = 0;
+	avio_flush(file);
+	avio_seek(file, 0, SEEK_SET);
+
+	logDebug("Computing final hash:\n");
+	while (pos != fileSize)
+	{
+		int r = avio_read(file, buffer, std::min<int64_t>(fileSize - pos, sizeof(buffer)));
+		if (r == 0)
+			logError("avio_read_partial: Premature end of file\n");
+		else if (r < 0)
+			failOnAVERROR(r, "avio_read_partial");
+
+		logDebug("   -> %" PRIi64 "-%" PRIi64 ": size %d\n", pos, pos + r, r);
+		av_hash_update(hashCtx, buffer, r);
+
+		pos += r;
+	}
+
+	std::vector<uint8_t> hashBuffer(hashSize);
+	av_hash_final(hashCtx, hashBuffer.data());
+	av_hash_freep(&hashCtx);
+
+	logDebug("Final %s hash is ", hashName);
+	for (int i = 0; i < hashSize; i++)
+		logDebug("%02x", hashBuffer[i]);
+	logDebug("\n");
+
+	if (hashBuffer == expectedHash)
+		return true;
+
+	logError("Hash verification failed: corrupt file\n");
+	return false;
+}
+
+static int decompress(const CommandLine &cmd)
 {
 	AVFormatContext *inputFormatContext = nullptr;
 
@@ -133,12 +183,12 @@ int decompress(const CommandLine &cmd)
 
 	AVIOContext *llrFile, *outputFile;
 	failOnAVERROR(avio_open(&llrFile, llrFilename, AVIO_FLAG_READ), "avio_open: %s", llrFilename);
-	failOnAVERROR(avio_open(&outputFile, outputFilename, AVIO_FLAG_WRITE), "avio_open: %s", outputFilename);
+	failOnAVERROR(avio_open(&outputFile, outputFilename, AVIO_FLAG_READ_WRITE | AVIO_FLAG_DIRECT), "avio_open: %s", outputFilename);
 
 	std::map<int, Decoder*> decoders;
 	PacketReferences packetRefs;
 
-	readLLR(llrFile, &packetRefs, outputFile);
+	const LLRInfo info = readLLR(llrFile, &packetRefs, outputFile);
 	if (packetRefs.streams().size() != inputFormatContext->nb_streams)
 		logError("Stream count mismatch\n");
 
@@ -222,14 +272,17 @@ int decompress(const CommandLine &cmd)
 	av_packet_free(&packet);
 
 	failOnAVERROR(avio_closep(&llrFile), "avio_closep");
-	failOnAVERROR(avio_closep(&outputFile), "avio_closep");
 
 	avformat_close_input(&inputFormatContext);
 
-	if (reverseRefs.empty())
-		return EXIT_SUCCESS;
+	if (!reverseRefs.empty())
+		logError("One or more source packets are missing\n");
 
-	logError("One or more source packets are missing\n");
+	// Verify hash
+	bool hashOk = verifyHash(outputFile, info.originalFileSize, info.hashName.c_str(), info.hashBuffer);
+	failOnAVERROR(avio_closep(&outputFile), "avio_closep");
+
+	return hashOk ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
 int main(int argc, char *argv[])

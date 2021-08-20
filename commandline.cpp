@@ -32,6 +32,7 @@ static const std::map<std::string, std::string> defaultVideoCodecOptions
 	{ "g", "600" },
 	{ "slices", "4" }
 };
+static const std::string defaultHashName = "MD5";
 
 static AVCodecID parseVideoCodec(const std::string &name)
 {
@@ -87,11 +88,12 @@ static std::string llrFileFromMkv(const char *argName, const std::string &argVal
 
 CommandLine::CommandLine(int argc, char *argv[])
 : m_debugFlag(false), m_decompressFlag(false),
-  m_videoCodec(parseVideoCodec(defaultVideoCodec)), m_videoCodecOptions(defaultVideoCodecOptions)
+  m_videoCodec(parseVideoCodec(defaultVideoCodec)), m_videoCodecOptions(defaultVideoCodecOptions), m_hashName(defaultHashName)
 {
 	bool seenInputFile = false;
 	bool seenOutputFile = false;
 	bool seenVideoCodec = false;
+	bool seenHashName = false;
 	bool seenDoubleDash = false;
 	bool valid = true;
 
@@ -190,6 +192,38 @@ process_positional_argument:
 
 			seenVideoCodec = true;
 		}
+		else if (strcmp(argv[i], "--hash") == 0)
+		{
+			if (++i >= argc)
+			{
+				logWarning("Argument required: --hash ALGORITHM\n");
+				valid = false;
+			}
+			else if (seenHashName)
+			{
+				logWarning("Option cannot be repeated more than once: --hash ALGORITHM\n");
+				valid = false;
+			}
+			else
+			{
+				m_hashName = argv[i];
+
+				bool found = false;
+				for (const std::string &e : enumerateHashAlgorithms())
+				{
+					if (e == m_hashName)
+						found = true;
+				}
+
+				if (!found)
+				{
+					logWarning("Invalid hash algorithm: %s\n", argv[i]);
+					valid = false;
+				}
+			}
+
+			seenHashName = true;
+		}
 		else if (strcmp(argv[i], "--") == 0)
 		{
 			seenDoubleDash = true;
@@ -210,6 +244,12 @@ process_positional_argument:
 		if (seenVideoCodec)
 		{
 			logWarning("Option can only be used if -d is not set: -v CODEC_NAME [key=value ...]\n");
+			valid = false;
+		}
+
+		if (seenHashName)
+		{
+			logWarning("Option can only be used if -d is not set: --hash ALGORITHM\n");
 			valid = false;
 		}
 	}
@@ -256,9 +296,11 @@ void CommandLine::help()
 	fprintf(stderr, " --debug   Show debug messages from rawcompr\n");
 	fprintf(stderr, "\n");
 
-	fprintf(stderr, "Codec parameters (compression only):\n");
+	fprintf(stderr, "Compression-only parameters:\n");
 	fprintf(stderr, " -v CODEC_NAME [key=value ...]\n");
 	fprintf(stderr, "           Select video codec and options\n");
+	fprintf(stderr, " --hash ALGORITHM\n");
+	fprintf(stderr, "           Embed the input file's hash using the selected algorithm (default: %s)\n", defaultHashName.c_str());
 	fprintf(stderr, "\n");
 
 	fprintf(stderr, "Note:\n");
@@ -269,6 +311,11 @@ void CommandLine::help()
 	fprintf(stderr, "Default video codec: -v %s", defaultVideoCodec.c_str());
 	for (const auto &[k, v] : defaultVideoCodecOptions)
 		fprintf(stderr, " %s=%s", k.c_str(), v.c_str());
+	fprintf(stderr, "\n");
+
+	fprintf(stderr, "Available hash algorithms:");
+	for (const std::string &e : enumerateHashAlgorithms())
+		fprintf(stderr, " %s", e.c_str());
 	fprintf(stderr, "\n");
 }
 
@@ -309,4 +356,11 @@ void CommandLine::fillVideoCodecOptions(AVDictionary **outDict) const
 
 	for (auto &[k, v] : m_videoCodecOptions)
 		av_dict_set(outDict, k.c_str(), v.c_str(), 0);
+}
+
+std::string CommandLine::hashName() const
+{
+	assert(m_decompressFlag == false);
+
+	return m_hashName;
 }

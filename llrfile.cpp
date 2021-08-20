@@ -185,7 +185,7 @@ void PacketReferences::serialize(AVIOContext *dest) const
 	}
 }
 
-void writeLLR(AVIOContext *inputFile, const PacketReferences *packetRefs, AVIOContext *llrFile)
+void writeLLR(AVIOContext *inputFile, const PacketReferences *packetRefs, AVIOContext *llrFile, const char *hashName)
 {
 	unsigned char buffer[LLR_BUFFER_SIZE];
 
@@ -196,12 +196,29 @@ void writeLLR(AVIOContext *inputFile, const PacketReferences *packetRefs, AVIOCo
 	int64_t prevOffset = 0;
 
 	avio_wb64(llrFile, inputSize);
+
+	// Initialize hashing
+	AVHashContext *hashCtx;
+	failOnAVERROR(av_hash_alloc(&hashCtx, hashName), "av_hash_alloc");
+	av_hash_init(hashCtx);
+	int hashSize = av_hash_get_size(hashCtx);
+
+	// Store hash name and size in output file + reserve space for the final hash
+	avio_put_str(llrFile, hashName);
+	avio_wb16(llrFile, hashSize);
+	int64_t hashPos = avio_tell(llrFile);
+	avio_skip(llrFile, hashSize);
+
 	packetRefs->serialize(llrFile);
+
+	avio_seek(inputFile, 0, SEEK_SET);
 
 	auto embedChunk = [&](int64_t start, int64_t end)
 	{
 		logDebug("  %" PRIi64 "-%" PRIi64 ": Embedding - size %" PRIi64 "\n", start, end, end - start);
-		avio_seek(inputFile, start, SEEK_SET);
+
+		if (avio_tell(inputFile) != start)
+			logError("embedChunk: Unexpected file offset, probably a bug. halting!\n");
 
 		while (start != end)
 		{
@@ -214,6 +231,29 @@ void writeLLR(AVIOContext *inputFile, const PacketReferences *packetRefs, AVIOCo
 			logDebug("   -> %" PRIi64 "-%" PRIi64 ": size %" PRIi64 "\n", start, start + r, r);
 
 			avio_write(llrFile, buffer, r);
+			av_hash_update(hashCtx, buffer, r);
+
+			start += r;
+		}
+	};
+
+	auto hashChunk = [&](int64_t start, int64_t end)
+	{
+		if (avio_tell(inputFile) != start)
+			logError("hashChunk: Unexpected file offset, probably a bug. halting!\n");
+
+		while (start != end)
+		{
+			int64_t r = avio_read_partial(inputFile, buffer, std::min(LLR_BUFFER_SIZE, end - start));
+			if (r == 0)
+				logError("avio_read_partial: Premature end of file\n");
+			else if (r < 0)
+				failOnAVERROR(r, "avio_read_partial");
+
+			logDebug("   -> %" PRIi64 "-%" PRIi64 ": size %" PRIi64 "\n", start, start + r, r);
+
+			av_hash_update(hashCtx, buffer, r);
+
 			start += r;
 		}
 	};
@@ -230,25 +270,61 @@ void writeLLR(AVIOContext *inputFile, const PacketReferences *packetRefs, AVIOCo
 
 		logDebug("  %" PRIi64 "-%" PRIi64 ": Referencing stream #0:%d (index %zu) - pts %" PRIi64 " size %d\n",
 			origPos, prevOffset, e.streamIndex, e.packetIndex, e.pts, e.origSize);
+
+		hashChunk(origPos, prevOffset);
 	}
 
 	if (prevOffset != inputSize)
 		embedChunk(prevOffset, inputSize);
+
+	// Finalize hashing and write result
+	uint8_t hashBuffer[hashSize];
+	av_hash_final(hashCtx, hashBuffer);
+	av_hash_freep(&hashCtx);
+
+	logDebug("Storing input file hash (%s): ", hashName);
+	for (int i = 0; i < hashSize; i++)
+		logDebug("%02x", hashBuffer[i]);
+	logDebug("\n");
+
+	avio_seek(llrFile, hashPos, SEEK_SET);
+	avio_write(llrFile, hashBuffer, hashSize);
 }
 
-void readLLR(AVIOContext *llrFile, PacketReferences *outPacketRefs, AVIOContext *outputFile)
+LLRInfo readLLRInfo(AVIOContext *llrFile)
 {
-	unsigned char buffer[LLR_BUFFER_SIZE];
+	LLRInfo result;
 
 	if (avio_rb32(llrFile) != LLR_MAGIC_SIGNATURE)
 		logError("Invalid LLR file signature\n");
 
 	logDebug("Reading LLR file:\n");
 
-	int64_t outputSize = avio_rb64(llrFile);
-	int64_t prevOffset = 0;
+	result.originalFileSize = avio_rb64(llrFile);
+	logDebug("  Original file size: %" PRIi64 "\n", result.originalFileSize);
 
-	logDebug("  Original file size: %" PRIi64 "\n", outputSize);
+	char buffer[128];
+	avio_get_str(llrFile, sizeof(buffer) - 1, buffer, sizeof(buffer));
+	result.hashName = buffer;
+
+	int hashSize = avio_rb16(llrFile);
+	logDebug("  Hash: %s (size %d) ", result.hashName.c_str(), hashSize);
+
+	std::vector<uint8_t> hashBuffer(hashSize);
+	avio_read(llrFile, hashBuffer.data(), hashSize);
+	for (int i = 0; i < hashSize; i++)
+		logDebug("%02x", hashBuffer[i]);
+	logDebug("\n");
+
+	result.hashBuffer = hashBuffer;
+	return result;
+}
+
+LLRInfo readLLR(AVIOContext *llrFile, PacketReferences *outPacketRefs, AVIOContext *outputFile)
+{
+	unsigned char buffer[LLR_BUFFER_SIZE];
+
+	LLRInfo info = readLLRInfo(llrFile);
 	outPacketRefs->deserialize(llrFile);
 
 	auto loadChunk = [&](int64_t start, int64_t end)
@@ -271,6 +347,8 @@ void readLLR(AVIOContext *llrFile, PacketReferences *outPacketRefs, AVIOContext 
 		}
 	};
 
+	int64_t prevOffset = 0;
+
 	for (const auto &[origPos, e] : outPacketRefs->table())
 	{
 		if (origPos != prevOffset)
@@ -282,6 +360,8 @@ void readLLR(AVIOContext *llrFile, PacketReferences *outPacketRefs, AVIOContext 
 		prevOffset += e.origSize;
 	}
 
-	if (prevOffset != outputSize)
-		loadChunk(prevOffset, outputSize);
+	if (prevOffset != info.originalFileSize)
+		loadChunk(prevOffset, info.originalFileSize);
+
+	return info;
 }

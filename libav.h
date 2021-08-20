@@ -19,12 +19,15 @@
 #define LIBAV_H
 
 #include <stdint.h>
+#include <string>
+#include <vector>
 
 extern "C"
 {
 
 #include <libavformat/avformat.h>
 #include <libavutil/common.h>
+#include <libavutil/hash.h>
 #include <libavutil/pixdesc.h>
 #include <libavutil/timestamp.h>
 #include <libswscale/swscale.h>
@@ -34,5 +37,6 @@ extern "C"
 void failOnAVERROR(int errnum, const char *fmt, ...)  __attribute__((format(printf, 2, 3)));
 
 AVPixelFormat selectCompatibleLosslessPixelFormat(AVPixelFormat src, const enum AVPixelFormat *candidates /* -1 terminator */);
+std::vector<std::string> enumerateHashAlgorithms();
 
 #endif

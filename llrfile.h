@@ -68,7 +68,16 @@ class PacketReferences
 		std::map<size_t, ReferenceInfo> m_table; // origPos -> other fields
 };
 
-void writeLLR(AVIOContext *inputFile, const PacketReferences *packetRefs, AVIOContext *llrFile);
-void readLLR(AVIOContext *llrFile, PacketReferences *outPacketRefs, AVIOContext *outputFile);
+struct LLRInfo
+{
+	int64_t originalFileSize;
+
+	std::string hashName;
+	std::vector<uint8_t> hashBuffer; // hash value
+};
+
+void writeLLR(AVIOContext *inputFile, const PacketReferences *packetRefs, AVIOContext *llrFile, const char *hashName);
+LLRInfo readLLRInfo(AVIOContext *llrFile);
+LLRInfo readLLR(AVIOContext *llrFile, PacketReferences *outPacketRefs, AVIOContext *outputFile);
 
 #endif

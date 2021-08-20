@@ -95,3 +95,20 @@ AVPixelFormat selectCompatibleLosslessPixelFormat(AVPixelFormat src, const enum 
 	else
 		return result;
 }
+
+std::vector<std::string> enumerateHashAlgorithms()
+{
+	std::vector<std::string> result;
+
+	int i = 0;
+	while (true)
+	{
+		const char *hashName = av_hash_names(i++);
+		if (hashName == nullptr)
+			break;
+
+		result.push_back(hashName);
+	}
+
+	return result;
+}
