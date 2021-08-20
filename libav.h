@@ -35,6 +35,13 @@ extern "C"
 }
 
 void failOnAVERROR(int errnum, const char *fmt, ...)  __attribute__((format(printf, 2, 3)));
+void seekOrFail(AVIOContext *s, int64_t offset);
+
+void _failOnWriteError(AVIOContext *s, const char *op);
+#define failOnWriteError(op, s, ...) do { _failOnWriteError(s, "precondition"); op(s, __VA_ARGS__); _failOnWriteError(s, #op); } while(false)
+
+// If AVIO_FLAG_DIRECT is set, ffurl_write says "avoid sending too big packets" and fails if we try to write more than max_packet_size
+void writeInChunks(AVIOContext *s, const unsigned char *buf, int size);
 
 AVPixelFormat selectCompatibleLosslessPixelFormat(AVPixelFormat src, const enum AVPixelFormat *candidates /* -1 terminator */);
 std::vector<std::string> enumerateHashAlgorithms();

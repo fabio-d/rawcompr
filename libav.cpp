@@ -43,6 +43,30 @@ void failOnAVERROR(int errnum, const char *fmt, ...)
 	va_end(ap);
 }
 
+void seekOrFail(AVIOContext *s, int64_t offset)
+{
+	int64_t r = avio_seek(s, offset, SEEK_SET);
+	if (r != offset)
+		logError("avio_seek failed");
+}
+
+void _failOnWriteError(AVIOContext *s, const char *op)
+{
+	failOnAVERROR(s->error, "%s", op);
+}
+
+void writeInChunks(AVIOContext *s, const unsigned char *buf, int size)
+{
+	while (size != 0)
+	{
+		int chunkSize = std::min(size, s->max_packet_size);
+		failOnWriteError(avio_write, s, buf, chunkSize);
+
+		buf += chunkSize;
+		size -= chunkSize;
+	}
+}
+
 AVPixelFormat selectCompatibleLosslessPixelFormat(AVPixelFormat src, const enum AVPixelFormat *candidates)
 {
 	auto printLosses = [](int losses, const char *suffix)

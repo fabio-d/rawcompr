@@ -135,8 +135,7 @@ static bool verifyHash(AVIOContext *file, int64_t fileSize, const char *hashName
 		logError("Hash verification failed: hash size mismatch\n");
 
 	int64_t pos = 0;
-	avio_flush(file);
-	avio_seek(file, 0, SEEK_SET);
+	seekOrFail(file, 0);
 
 	logDebug("Computing final hash:\n");
 	while (pos != fileSize)
@@ -262,8 +261,8 @@ static int decompress(const CommandLine &cmd)
 		int64_t start = it->second.first; // origPos
 		logDebug(" -> %" PRIi64 "-%" PRIi64 ": writing %" PRIi64 " bytes\n", start, start + uncompressedData.size(), uncompressedData.size());
 
-		avio_seek(outputFile, start, SEEK_SET);
-		avio_write(outputFile, uncompressedData.data(), (int)uncompressedData.size());
+		seekOrFail(outputFile, start);
+		writeInChunks(outputFile, uncompressedData.data(), (int)uncompressedData.size());
 
 		reverseRefs.erase(it);
 		av_packet_unref(packet);
