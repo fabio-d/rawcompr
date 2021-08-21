@@ -54,6 +54,8 @@ static AVCodecID parseVideoCodec(const std::string &name)
 		return AV_CODEC_ID_FFV1;
 	if (name == "huffyuv")
 		return AV_CODEC_ID_HUFFYUV;
+	if (name == "h264")
+		return AV_CODEC_ID_H264;
 
 	logWarning("Invalid or unsupported video codec: %s\n", name.c_str());
 	return AV_CODEC_ID_NONE;

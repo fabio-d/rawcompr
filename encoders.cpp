@@ -96,6 +96,7 @@ VideoEncoder::VideoEncoder(const AVStream *inputStream, AVFormatContext *outputF
 	failOnAVERROR(avcodec_parameters_to_context(m_outputCodecContext, m_outputStream->codecpar), "avcodec_parameters_to_context");
 	m_outputCodecContext->time_base = inputStream->time_base;
 	m_outputCodecContext->pix_fmt = selectCompatibleLosslessPixelFormat(m_inputCodecContext->pix_fmt, outputCodec->pix_fmts);
+	m_outputCodecContext->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
 	failOnAVERROR(avcodec_open2(m_outputCodecContext, outputCodec, outputOptions), "avcodec_open2");
 	failOnAVERROR(avcodec_parameters_from_context(m_outputStream->codecpar, m_outputCodecContext), "avcodec_parameters_from_context");

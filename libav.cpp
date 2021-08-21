@@ -102,8 +102,10 @@ AVPixelFormat selectCompatibleLosslessPixelFormat(AVPixelFormat src, const enum 
 
 		int losses = av_get_pix_fmt_loss(*candidates, src, false);
 		int lossesInv = av_get_pix_fmt_loss(src, *candidates, true);
+		bool supportedAsInput = sws_isSupportedInput(*candidates) != 0;
+		bool supportedAsOutput = sws_isSupportedOutput(*candidates) != 0;
 
-		if (losses == 0 && lossesInv == 0)
+		if (losses == 0 && lossesInv == 0 && supportedAsInput && supportedAsOutput && result == AV_PIX_FMT_NONE)
 		{
 			logDebug("*");
 			result = *candidates;
@@ -111,6 +113,11 @@ AVPixelFormat selectCompatibleLosslessPixelFormat(AVPixelFormat src, const enum 
 
 		printLosses(losses, "");
 		printLosses(lossesInv, "_INV");
+		if (!supportedAsInput)
+			logDebug(" UNSUPPORTED_INPUT");
+		if (!supportedAsOutput)
+			logDebug(" UNSUPPORTED_OUTPUT");
+
 		logDebug("\n");
 	}
 
