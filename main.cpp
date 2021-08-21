@@ -24,6 +24,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+static void errorIfUnusedOptions(const AVDictionary *opts)
+{
+	const AVDictionaryEntry *t = nullptr;
+	bool error = false;
+
+	while (true)
+	{
+		t = av_dict_get(opts, "", t, AV_DICT_IGNORE_SUFFIX);
+		if (t == nullptr)
+			break;
+
+		logWarning("Unrecognized codec option: %s\n", t->key);
+		error = true;
+	}
+
+	if (error)
+		exit(EXIT_FAILURE);
+}
+
 static int compress(const CommandLine &cmd)
 {
 	AVFormatContext *inputFormatContext = nullptr, *outputFormatContext = nullptr;
@@ -58,6 +77,7 @@ static int compress(const CommandLine &cmd)
 			AVDictionary *opts = nullptr;
 			cmd.fillVideoCodecOptions(&opts);
 			encoder = new VideoEncoder(inputStream, outputFormatContext, &packetRefs, cmd.videoCodec(), &opts);
+			errorIfUnusedOptions(opts);
 			av_dict_free(&opts);
 		}
 
