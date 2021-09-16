@@ -33,18 +33,12 @@ Encoder::~Encoder()
 
 void Encoder::finalizeAndWritePacket(const AVPacket *inputPacket, AVPacket *outputPacket)
 {
+	outputPacket->pts = inputPacket->pts;
+	outputPacket->dts = inputPacket->dts;
+	outputPacket->duration = inputPacket->duration;
+	av_packet_rescale_ts(outputPacket, m_inputStream->time_base, m_outputStream->time_base);
+
 	outputPacket->stream_index = m_outputStream->index;
-
-        outputPacket->pts = av_rescale_q_rnd(inputPacket->pts,
-		m_inputStream->time_base, m_outputStream->time_base,
-		AVRounding(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
-
-        outputPacket->dts = av_rescale_q_rnd(inputPacket->dts,
-		m_inputStream->time_base, m_outputStream->time_base,
-		AVRounding(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
-
-	outputPacket->duration = av_rescale_q(inputPacket->duration,
-		m_inputStream->time_base, m_outputStream->time_base);
 
 	logDebug(" -> Output packet: Stream #0:%d (index %zu size %u) - pts %" PRIi64 " dts %" PRIi64 " duration %" PRIi64 "\n",
 		outputPacket->stream_index, m_outPacketIndex, outputPacket->size, outputPacket->pts, outputPacket->dts, outputPacket->duration);
