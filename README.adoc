@@ -1,3 +1,139 @@
-# rawcompr
+:toc: preamble
+:toc-title:
+
+= rawcompr
 
 Losslessly compress multimedia files containing raw video tracks
+
+== Description
+
+This FFmpeg-based tool compresses raw video tracks in multimedia files using one
+of the following lossless codecs:
+
+* FFV1
+* HUFFYUV
+* H264 with lossless parameters
+
+The resulting compressed file will be in Matroska video format (`.mkv`), which
+can be read by FFmpeg and played by VLC.
+
+Note that while plain simple `ffmpeg` can encode video tracks into FFV1 (or
+another lossless codec) and guarantee that every single data bit of the original
+raw frames can be reconstructed, this tool adds an *extra layer that guarantees
+that the entire original file can be reconstructed* (not just single frames
+one-by-one), including the *exact container structure and metadata embedded in
+the file*.
+
+The decompression routine is also implemented in this tool, along with
+hash-based checks to validate the integrity of the reconstructed file.
+
+=== How does it work?
+
+Compressing using this tool is roughly equivalent to
+
+[source,shell]
+----
+ffmpeg -i INPUT_FILE.avi -codec:v ffv1 -codec:a copy OUTPUT_FILE.mkv
+----
+
+with the difference that it will also output an extra file, with `.llr`
+extension ("LossLess References"), which is basically a copy of the original
+file, with two differences:
+
+* sections originally containing frames' raw data are replaced with references
+  to the corresponding video frames in the `.mkv` file
+* similarly, sections originally containing other types of frames (e.g. audio
+  frames) are also replaced with references to the corresponding frames (e.g.
+  audio frames) in the `.mkv` file.
+
+In addition, the `.llr` file contains metadata such as the hash of the original
+file.
+
+The decompressor reverses the process by copying the original file's contents
+from the `.llr` file, while replacing references with:
+
+* a decompressed video frame (wherever the original file had a raw video frame)
+* a copy of the corresponding `.mkv` frame (wherever the original file had a
+  different type of frame)
+
+Lastly, at the end of the process, the decompression routine compares the hash
+of the reconstructed file to the hash contained in the `.llr` metadata section
+to validate the result.
+
+== Usage
+
+[source,console]
+----
+$ rawcompr -h
+Losslessly compress raw streams in multimedia files.
+
+Usage: rawcompr [-d] [OTHER OPTIONS] -i INPUT OUTPUT
+
+Basic options:
+ -d        Decompress instead of compressing
+ -i INPUT  Input file
+ OUTPUT    Output file
+ --debug   Enable debug output from rawcompr
+ --libavloglevel LEVEL
+           Set libav log level
+
+Compression-only parameters:
+ -v CODEC_NAME [key=value ...]
+           Select video codec and options
+ --hash ALGORITHM
+           Embed the input file's hash using the selected algorithm (default: MD5)
+
+Note:
+ - If compressing, OUTPUT file must have .mkv extension
+ - If decompressing, INPUT file must have .mkv extension
+
+[cut]
+----
+
+`rawcompr -h` also shows the default codec (FFV1) and options, and the list of
+available hashing algorithms.
+
+=== Compression and decompression
+
+[source,console]
+----
+$ md5sum original.avi
+569214dc03ca67ec4007860851df9fee  original.avi
+
+$ rawcompr -i original.avi compressed.mkv && rm original.avi
+
+$ ls
+compressed.llr  compressed.mkv
+
+$ rawcompr -d -i compressed.mkv reconstructed.avi
+
+$ md5sum reconstructed.avi
+569214dc03ca67ec4007860851df9fee  reconstructed.avi
+----
+
+*Note*: The original file can be in any multimedia format, not just AVI.
+
+*Note 2*: the two `md5sum` invocations were listed for clarity's sake. Hash
+verification is already built-in in the decompression algorithm.
+
+=== Supported codecs (with tested options) and comparison
+
+* FFV1 (default options, see `rawcompr -h`): `rawcompr -i original.avi compressed-default.mkv`
+* FFV1 (no options): `rawcompr -i original.avi -v ffv1 compressed-ffv1.mkv`
+* HUFFYUV: `rawcompr -i original.avi -v huffyuv compressed-huffyuv.mkv`
+* Lossless H264: `rawcompr -i original.avi -v h264 crf=0 tune=zerolatency compressed-h264.mkv`
+
+*Note*: With H264, `crf=0` is necessary to setup lossless compression and
+`tune=zerolatency` is necessary due to how `rawcompr` interacts libav.
+
+[options="header"]
+|====================================================================================================
+| File Name                | File Size | Notes
+| `original.avi`           | 2.2 GiB   | 720x576 YUY2 video + PCM stereo audio, duration: 113 seconds
+| `compressed-default.mkv` | 850.0 MiB | compression: 78.4 seconds, decompression: 94.5 seconds
+| `compressed-ffv1.mkv`    | 948.4 MiB | compression: 52.5 seconds, decompression: 54.9 seconds
+| `compressed-huffyuv.mkv` | 1.1 GiB   | compression: 11.7 seconds, decompression: 15.2 seconds
+| `compressed-h264.mkv`    | 965.8 MiB | compression: 71.9 seconds, decompression: 89.1 seconds
+|====================================================================================================
+
+Compression and decompression times were measured on an Intel i7-4910MQ CPU.
