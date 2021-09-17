@@ -25,11 +25,11 @@ pkg_check_modules(LIBAV IMPORTED_TARGET libavcodec libavformat libavutil libswsc
 link_libraries(PkgConfig::LIBAV)
 
 add_executable(rawcompr
-	commandline.cpp
-	decoders.cpp
-	encoders.cpp
-	libav.cpp
-	llrfile.cpp
-	log.cpp
-	main.cpp
+	src/commandline.cpp
+	src/decoders.cpp
+	src/encoders.cpp
+	src/libav.cpp
+	src/llrfile.cpp
+	src/log.cpp
+	src/main.cpp
 )
