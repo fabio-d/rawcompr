@@ -137,3 +137,21 @@ verification is already built-in in the decompression algorithm.
 |====================================================================================================
 
 Compression and decompression times were measured on an Intel i7-4910MQ CPU.
+
+== Installation
+
+Prerequisites:
+
+* Fedora (with RPMfusion free repository): `dnf install cmake gcc-c++ ffmpeg-devel`
+* Debian/Ubuntu: `apt install cmake g++ libavcodec-dev libavformat-dev libswscale-dev make pkg-config`
+
+Build and install:
+
+[source,shell]
+----
+mkdir build
+cd build
+cmake ..
+make
+sudo make install
+----

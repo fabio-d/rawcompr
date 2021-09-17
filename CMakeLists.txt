@@ -19,6 +19,7 @@ project(rawcompr LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+include(GNUInstallDirs)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBAV IMPORTED_TARGET libavcodec libavformat libavutil libswscale)
@@ -33,3 +34,4 @@ add_executable(rawcompr
 	src/log.cpp
 	src/main.cpp
 )
+install(TARGETS rawcompr)
